@@ -65,6 +65,7 @@ The gateway uses Bark's V2 JSON `POST /push` API. Set `BARK_BASE_URL` for the lo
 |---|---|---|
 | Official service | `https://api.day.app` | Default; no self-hosted Bark required |
 | Same Compose project | `http://bark-server:8080` | Use the Bark service name on a shared network |
+| Separate Compose project | `http://bark-server:8080` | Bark in its own Compose project; declare a shared external network on both sides (see below) |
 | Docker host | `http://host.docker.internal:8080` | The Compose file includes Linux's host-gateway mapping; Bark must listen on a container-reachable address |
 | Another LAN host | `http://192.168.1.20:8080` | The address must be routable from the container |
 | HTTPS domain/proxy | `https://bark.example.com` | TLS terminates at the reverse proxy |
@@ -76,7 +77,31 @@ For a route that cannot be expressed as base URL plus `/push`, set the exact end
 BARK_PUSH_URL=https://notify.example.com/internal/bark/v2/push
 ```
 
-`BARK_PUSH_URL` takes precedence over `BARK_BASE_URL`. In every topology, `BARK_DEVICE_KEY` is the key registered in the Bark app for that server. Do not use the complete `https://api.day.app/<key>` test URL as `BARK_BASE_URL`.
+`BARK_PUSH_URL` takes precedence over `BARK_BASE_URL` and is used verbatim as the request endpoint: it must be the complete `.../push` URL. Never leave an empty assignment (`BARK_PUSH_URL=` fails startup validation) — delete or comment out the whole line instead. In every topology, `BARK_DEVICE_KEY` is the key registered in the Bark app for that server. Do not use the complete `https://api.day.app/<key>` test URL as `BARK_BASE_URL`.
+
+### Bark in another Compose project
+
+If Bark runs in its own Compose project — for example behind Nginx with `ports: "127.0.0.1:8080:8080"` — the gateway container cannot reach it via `host.docker.internal`, because the published port binds to host loopback only. Connect both containers to a shared external network instead. This is additive: existing published ports and any Nginx → Bark path keep working.
+
+Append to **both** `docker-compose.yaml` files:
+
+```yaml
+services:
+  <service>:
+    networks: [default, bark-link]
+
+networks:
+  bark-link:
+    external: true
+```
+
+```bash
+docker network create bark-link   # once
+# run in both project directories
+docker compose up -d
+```
+
+Then set `BARK_BASE_URL=http://bark-server:8080` (the Bark `container_name`). Note that after changing `.env` you must recreate with `docker compose up -d`; `docker compose restart` does not reload `env_file` values.
 
 ## Generic request
 
@@ -91,7 +116,7 @@ Tokens may use `Authorization: Bearer ...`, `X-Webhook-Token`, or fallback `?tok
 
 ## Tailscale and Paseo
 
-Tailscale accepts the native JSON event array. It formats common device, key, user, policy, and routing events; unknown types still produce notifications. Set the Tailscale destination to `None` and use `https://notify.example.com/hooks/tailscale/`.
+Tailscale accepts the native JSON event array. It formats common device, key, user, policy, and routing events; unknown types still produce notifications. Set the Tailscale destination to `None`. Behind the Nginx setup below, use `https://notify.example.com/hooks/tailscale/`; without a reverse proxy, use `http://<host>:8787/hook/tailscale/`.
 
 Paseo tolerates top-level or nested `data` fields. Recommended payload:
 
@@ -99,7 +124,7 @@ Paseo tolerates top-level or nested `data` fields. Recommended payload:
 {"event":"completed","data":{"project":"SouthGrid","agentName":"GPT Expert","summary":"Task completed","url":"https://paseo.example/agents/123"}}
 ```
 
-Known states include completed, success, failed, error, needs-attention, waiting, started, and running. Namespaced events such as `agent.completed` are accepted.
+Known states include completed, success, failed, error, needs-attention, waiting, started, and running. Namespaced events such as `agent.completed` are accepted. Paseo sends `PASEO_TOKEN` using the same token methods as Generic.
 
 ## Nginx and migration
 
@@ -131,7 +156,7 @@ Some senders do not preserve POST bodies or authorization headers across redirec
 
 To add GitHub, PVE, or Training, implement `Adapter.transform()`, register the adapter, add an independent credential or native signature verifier, and add tests. Nginx remains unchanged. New outputs implement the provider interface.
 
-Logs are one-line JSON and exclude credentials and raw payloads. Responses use `401` for authentication, `404` for unknown adapters, `413` for oversized payloads, `422` for invalid payloads, `502` for Bark failures, and `503` for missing source configuration. Delivery is synchronous and has no persistent retry queue; a partially delivered Tailscale batch may be retried and produce duplicates.
+Logs are one-line JSON and exclude credentials and raw payloads. Responses use `400` for non-JSON bodies, `401` for authentication, `404` for unknown adapters, `413` for oversized payloads, `422` for invalid payloads, `502` for Bark failures, and `503` for missing source configuration. Delivery is synchronous and has no persistent retry queue; a partially delivered Tailscale batch may be retried and produce duplicates.
 
 ## Development, license, and security
 

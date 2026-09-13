@@ -63,6 +63,7 @@ docker compose logs -f webhook-bark-gateway
 |---|---|---|
 | 官方服务器 | `https://api.day.app` | 默认配置，无需自建 Bark |
 | 与网关在同一 Compose | `http://bark-server:8080` | 使用 Bark service 名；两个容器须在同一 network |
+| 另一个 Compose 项目 | `http://bark-server:8080` | Bark 是独立 Compose 项目；双方声明共享 external network（见下文） |
 | Docker 宿主机 | `http://host.docker.internal:8080` | Compose 已提供 Linux host-gateway 映射；Bark 须监听容器可达地址 |
 | 另一台内网主机 | `http://192.168.1.20:8080` | 确保容器到该地址可路由 |
 | HTTPS 域名/反代 | `https://bark.example.com` | TLS 在反向代理终止 |
@@ -74,7 +75,31 @@ docker compose logs -f webhook-bark-gateway
 BARK_PUSH_URL=https://notify.example.com/internal/bark/v2/push
 ```
 
-`BARK_PUSH_URL` 设置后优先于 `BARK_BASE_URL`。无论使用哪种服务器，`BARK_DEVICE_KEY` 都填写 Bark App 中该服务器对应的设备 key。请勿将 `https://api.day.app/<key>` 形式的完整测试 URL 当作 `BARK_BASE_URL`。
+`BARK_PUSH_URL` 设置后优先于 `BARK_BASE_URL`，并且会**原样**作为请求端点：必须是完整的 `.../push` URL。切勿留空赋值（`BARK_PUSH_URL=` 会导致启动校验失败），应整行删除或注释。无论使用哪种服务器，`BARK_DEVICE_KEY` 都填写 Bark App 中该服务器对应的设备 key。请勿将 `https://api.day.app/<key>` 形式的完整测试 URL 当作 `BARK_BASE_URL`。
+
+### Bark 在另一个 Compose 项目
+
+若 Bark 是独立的 Compose 项目（例如经 Nginx 反代、端口发布为 `127.0.0.1:8080:8080`），网关容器无法通过 `host.docker.internal` 访问它——发布的端口只绑定宿主机 loopback。此时给双方容器接入同一个共享 external network 即可。该操作只增不改：已发布的端口和 Nginx → Bark 链路均不受影响。
+
+在**两侧的** `docker-compose.yaml` 中都追加：
+
+```yaml
+services:
+  <service>:
+    networks: [default, bark-link]
+
+networks:
+  bark-link:
+    external: true
+```
+
+```bash
+docker network create bark-link   # 只需一次
+# 在两个项目目录分别执行
+docker compose up -d
+```
+
+然后设置 `BARK_BASE_URL=http://bark-server:8080`（Bark 的 `container_name`）。注意修改 `.env` 后必须用 `docker compose up -d` 重建容器，`docker compose restart` 不会重新读取 `env_file`。
 
 ## Generic 示例
 
@@ -89,7 +114,7 @@ Token 支持 `Authorization: Bearer ...`、`X-Webhook-Token` 或兼容用的 `?t
 
 ## Tailscale 与 Paseo
 
-Tailscale adapter 接收官方 JSON 数组，支持节点、密钥、用户、策略和路由事件；未知新事件也会发送。控制台 Destination 选择 `None`，URL 使用 `https://notify.example.com/hooks/tailscale/`。
+Tailscale adapter 接收官方 JSON 数组，支持节点、密钥、用户、策略和路由事件；未知新事件也会发送。控制台 Destination 选择 `None`。走下文 Nginx 配置时 URL 使用 `https://notify.example.com/hooks/tailscale/`；无反代直连时使用 `http://<host>:8787/hook/tailscale/`。
 
 Paseo adapter 会宽容读取顶层或 `data` 字段，推荐：
 
@@ -97,7 +122,7 @@ Paseo adapter 会宽容读取顶层或 `data` 字段，推荐：
 {"event":"completed","data":{"project":"SouthGrid","agentName":"GPT Expert","summary":"任务执行完成","url":"https://paseo.example/agents/123"}}
 ```
 
-支持 completed、success、failed、error、needs-attention、waiting、started、running，以及 `agent.completed` 这类命名空间事件。
+支持 completed、success、failed、error、needs-attention、waiting、started、running，以及 `agent.completed` 这类命名空间事件。Paseo 按与 Generic 相同的 token 方式携带 `PASEO_TOKEN`。
 
 ## Nginx 与迁移
 
@@ -129,7 +154,7 @@ location = /paseo-hook/ { proxy_pass http://127.0.0.1:8787/hook/paseo/; }
 
 新增 GitHub、PVE 或 Training 时，实现 `Adapter.transform()`、注册 adapter、添加独立凭据或原生签名校验，并补测试；Nginx 无需修改。新增输出渠道时实现 provider。
 
-日志为单行 JSON，不记录凭据或原始 payload。`401` 表示认证错误、`404` 未知 adapter、`413` 请求过大、`422` 载荷错误、`502` Bark 投递失败、`503` 来源未配置认证。当前是同步投递且没有持久化队列；Tailscale 批次部分成功后重投可能重复。
+日志为单行 JSON，不记录凭据或原始 payload。`400` 表示非 JSON body、`401` 表示认证错误、`404` 未知 adapter、`413` 请求过大、`422` 载荷错误、`502` Bark 投递失败、`503` 来源未配置认证。当前是同步投递且没有持久化队列；Tailscale 批次部分成功后重投可能重复。
 
 ```bash
 python -m pip install -r requirements-dev.txt
