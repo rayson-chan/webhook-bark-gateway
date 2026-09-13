@@ -7,7 +7,8 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
-    bark_base_url: AnyHttpUrl = "http://host.docker.internal:8080"
+    bark_base_url: AnyHttpUrl = "https://api.day.app"
+    bark_push_url: AnyHttpUrl | None = None
     bark_device_key: str = Field(min_length=1)
     bark_timeout_seconds: float = Field(default=10, gt=0, le=60)
 

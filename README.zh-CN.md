@@ -2,7 +2,7 @@
 
 简体中文 | [English](README.md)
 
-一个轻量、可扩展的 `Webhook → 标准通知 → Bark` 网关。它独立于现有 `bark-server` 运行，通过统一 `/hook/<service>/` 接收事件，再访问 Docker 宿主机上的 Bark。
+一个轻量、可扩展的 `Webhook → 标准通知 → Bark` 网关。它通过统一 `/hook/<service>/` 接收事件，可将通知发送到 Bark 官方服务器或任意自建 `bark-server`。
 
 > 状态：早期版本（`v0.1.x`）。核心流程已有测试；真实 Paseo 载荷和生产 Linux 环境仍建议进一步验证。
 
@@ -28,7 +28,7 @@ POST /hook/<service>/
   → adapter: tailscale | paseo | generic
   → Notification(group, title, body, level, url)
   → provider: Bark
-  → http://host.docker.internal:8080/push
+  → https://api.day.app/push（或自建 bark-server 的 /push）
 ```
 
 入口为 `POST /hook/tailscale/`、`/hook/paseo/`、`/hook/generic/` 和 `GET /healthz`。
@@ -39,7 +39,7 @@ POST /hook/<service>/
 cp .env.example .env
 ```
 
-填写 `BARK_DEVICE_KEY`，并为 `PASEO_TOKEN`、`GENERIC_TOKEN` 设置不同的长随机值。Tailscale 推荐使用创建 webhook 时显示的原生 secret：
+填写 `BARK_DEVICE_KEY`；默认使用 Bark 官方服务器 `https://api.day.app`。并为 `PASEO_TOKEN`、`GENERIC_TOKEN` 设置不同的长随机值。Tailscale 推荐使用创建 webhook 时显示的原生 secret：
 
 ```dotenv
 TAILSCALE_WEBHOOK_SECRET=你的Tailscale-webhook-secret
@@ -53,7 +53,28 @@ docker compose ps
 docker compose logs -f webhook-bark-gateway
 ```
 
-网关只发布到宿主机 `127.0.0.1:8787`。默认 `BARK_BASE_URL=http://host.docker.internal:8080` 通过 Docker host gateway 访问 Bark，因此 Bark 可以继续只监听宿主机 `127.0.0.1:8080`。
+网关只发布到宿主机 `127.0.0.1:8787`。
+
+## Bark 服务器部署方式
+
+本项目使用 Bark 官方 V2 JSON `POST /push` 接口。根据 Bark 所在位置设置 `BARK_BASE_URL`（不要包含设备 key）：
+
+| Bark 位置 | `BARK_BASE_URL` | 说明 |
+|---|---|---|
+| 官方服务器 | `https://api.day.app` | 默认配置，无需自建 Bark |
+| 与网关在同一 Compose | `http://bark-server:8080` | 使用 Bark service 名；两个容器须在同一 network |
+| Docker 宿主机 | `http://host.docker.internal:8080` | Compose 已提供 Linux host-gateway 映射；Bark 须监听容器可达地址 |
+| 另一台内网主机 | `http://192.168.1.20:8080` | 确保容器到该地址可路由 |
+| HTTPS 域名/反代 | `https://bark.example.com` | TLS 在反向代理终止 |
+| 反代子路径 | `https://notify.example.com/bark` | 最终请求为 `/bark/push` |
+
+若反向代理使用无法由“基础地址 + `/push`”表达的路径，可设置精确端点：
+
+```dotenv
+BARK_PUSH_URL=https://notify.example.com/internal/bark/v2/push
+```
+
+`BARK_PUSH_URL` 设置后优先于 `BARK_BASE_URL`。无论使用哪种服务器，`BARK_DEVICE_KEY` 都填写 Bark App 中该服务器对应的设备 key。请勿将 `https://api.day.app/<key>` 形式的完整测试 URL 当作 `BARK_BASE_URL`。
 
 ## Generic 示例
 

@@ -5,9 +5,17 @@ from gateway.providers.base import Provider, ProviderError
 
 
 class BarkProvider(Provider):
-    def __init__(self, base_url: str, device_key: str, timeout: float = 10) -> None:
-        endpoint = f"{base_url.rstrip('/')}/push"
-        self._endpoint = endpoint
+    def __init__(
+        self,
+        base_url: str,
+        device_key: str,
+        timeout: float = 10,
+        push_url: str | None = None,
+    ) -> None:
+        # ``push_url`` supports reverse proxies whose endpoint cannot be derived
+        # from the server root.  Keeping ``base_url`` preserves the simple and
+        # backwards-compatible configuration for official and self-hosted Bark.
+        self._endpoint = push_url or f"{base_url.rstrip('/')}/push"
         self._device_key = device_key
         self._client = httpx.AsyncClient(timeout=timeout)
 

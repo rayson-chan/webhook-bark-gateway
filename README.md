@@ -2,7 +2,7 @@
 
 [简体中文](README.zh-CN.md) | English
 
-A lightweight, extensible gateway that converts service-specific webhooks into clean [Bark](https://github.com/Finb/bark-server) notifications. It runs separately from `bark-server`, exposes `/hook/<service>/`, and reaches Bark on the Docker host.
+A lightweight, extensible gateway that converts service-specific webhooks into clean [Bark](https://github.com/Finb/bark-server) notifications. It exposes `/hook/<service>/` and can deliver through the official Bark service or any self-hosted `bark-server`.
 
 > Status: early release (`v0.1.x`). The core flow is tested; real Paseo payloads and production Linux deployments should receive additional field testing.
 
@@ -30,7 +30,7 @@ POST /hook/<service>/
   → adapter: tailscale | paseo | generic
   → Notification(group, title, body, level, url)
   → provider: Bark
-  → http://host.docker.internal:8080/push
+  → https://api.day.app/push (or a self-hosted bark-server /push)
 ```
 
 Endpoints are `POST /hook/tailscale/`, `/hook/paseo/`, `/hook/generic/`, and `GET /healthz`.
@@ -41,7 +41,7 @@ Endpoints are `POST /hook/tailscale/`, `/hook/paseo/`, `/hook/generic/`, and `GE
 cp .env.example .env
 ```
 
-Set `BARK_DEVICE_KEY`, plus distinct `PASEO_TOKEN` and `GENERIC_TOKEN` values. For Tailscale, configure the native secret shown when the webhook is created:
+Set `BARK_DEVICE_KEY`; the default uses the official Bark service at `https://api.day.app`. Also set distinct `PASEO_TOKEN` and `GENERIC_TOKEN` values. For Tailscale, configure the native secret shown when the webhook is created:
 
 ```dotenv
 TAILSCALE_WEBHOOK_SECRET=your-tailscale-webhook-secret
@@ -55,7 +55,28 @@ docker compose ps
 docker compose logs -f webhook-bark-gateway
 ```
 
-The gateway binds host `127.0.0.1:8787`. Its default `BARK_BASE_URL=http://host.docker.internal:8080` reaches Bark through Docker's host gateway, allowing Bark to remain bound to host `127.0.0.1:8080`.
+The gateway binds host `127.0.0.1:8787`.
+
+## Bark server topologies
+
+The gateway uses Bark's V2 JSON `POST /push` API. Set `BARK_BASE_URL` for the location of Bark (without the device key):
+
+| Bark location | `BARK_BASE_URL` | Notes |
+|---|---|---|
+| Official service | `https://api.day.app` | Default; no self-hosted Bark required |
+| Same Compose project | `http://bark-server:8080` | Use the Bark service name on a shared network |
+| Docker host | `http://host.docker.internal:8080` | The Compose file includes Linux's host-gateway mapping; Bark must listen on a container-reachable address |
+| Another LAN host | `http://192.168.1.20:8080` | The address must be routable from the container |
+| HTTPS domain/proxy | `https://bark.example.com` | TLS terminates at the reverse proxy |
+| Reverse-proxy subpath | `https://notify.example.com/bark` | Requests are sent to `/bark/push` |
+
+For a route that cannot be expressed as base URL plus `/push`, set the exact endpoint:
+
+```dotenv
+BARK_PUSH_URL=https://notify.example.com/internal/bark/v2/push
+```
+
+`BARK_PUSH_URL` takes precedence over `BARK_BASE_URL`. In every topology, `BARK_DEVICE_KEY` is the key registered in the Bark app for that server. Do not use the complete `https://api.day.app/<key>` test URL as `BARK_BASE_URL`.
 
 ## Generic request
 

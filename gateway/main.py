@@ -25,7 +25,10 @@ logger = logging.getLogger("gateway")
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     app.state.provider = BarkProvider(
-        str(settings.bark_base_url), settings.bark_device_key, settings.bark_timeout_seconds
+        str(settings.bark_base_url),
+        settings.bark_device_key,
+        settings.bark_timeout_seconds,
+        str(settings.bark_push_url) if settings.bark_push_url else None,
     )
     yield
     await app.state.provider.close()
