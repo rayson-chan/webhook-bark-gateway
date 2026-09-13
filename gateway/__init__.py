@@ -1,0 +1,2 @@
+"""Webhook to Bark gateway."""
+
